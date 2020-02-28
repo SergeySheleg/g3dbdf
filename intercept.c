@@ -1,11 +1,15 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <stdbool.h>
 #include <fcntl.h>
 #include <unistd.h>
 
 #include <libevdev/libevdev.h>
+
+#define KEY_RELEASED_EVENT 0
+#define KEY_PRESSED_EVENT 1
+#define KEY_REPEAT_EVENT 2
 
 void print_usage(FILE *stream, const char *program) {
     fprintf(stream,
@@ -22,69 +26,99 @@ void print_usage(FILE *stream, const char *program) {
 
 int main(int argc, char *argv[]) {
     int grab = 0;
-
     int opt;
+
     while ((opt = getopt(argc, argv, "hg")) != -1) {
         switch (opt) {
-            case 'h':
-                return print_usage(stdout, argv[0]), EXIT_SUCCESS;
-            case 'g':
-                if (grab)
-                    break;
-                grab = 1;
-                continue;
+        case 'h':
+            return print_usage(stdout, argv[0]), EXIT_SUCCESS;
+
+        case 'g':
+            if (grab) {
+                break;
+            }
+
+            grab = 1;
+            continue;
         }
 
         return print_usage(stderr, argv[0]), EXIT_FAILURE;
     }
 
-    if (optind != argc - 1)
+    if (optind != argc - 1) {
         return print_usage(stderr, argv[0]), EXIT_FAILURE;
+    }
 
     int fd = open(argv[optind], O_RDONLY);
-    if (fd < 0)
+
+    if (fd < 0) {
         return perror("open failed"), EXIT_FAILURE;
+    }
 
     int result = EXIT_FAILURE;
-
     struct libevdev *dev;
-    if (libevdev_new_from_fd(fd, &dev) < 0)
+
+    if (libevdev_new_from_fd(fd, &dev) < 0) {
         goto teardown_fd;
+    }
 
     sleep(1);
 
-    if (grab && libevdev_grab(dev, LIBEVDEV_GRAB) < 0)
+    if (grab && libevdev_grab(dev, LIBEVDEV_GRAB) < 0) {
         goto teardown_dev;
+    }
 
-    setbuf(stdout, NULL);
+    // setbuf(stdout, NULL);
+
+    bool wait_for_release = false;
+
     for (;;) {
         struct input_event input;
         int rc = libevdev_next_event(
-            dev, LIBEVDEV_READ_FLAG_NORMAL | LIBEVDEV_READ_FLAG_BLOCKING,
-            &input);
+                     dev, LIBEVDEV_READ_FLAG_NORMAL | LIBEVDEV_READ_FLAG_BLOCKING,
+                     &input);
 
-        while (rc == LIBEVDEV_READ_STATUS_SYNC)
+        while (rc == LIBEVDEV_READ_STATUS_SYNC) {
             rc = libevdev_next_event(dev, LIBEVDEV_READ_FLAG_SYNC, &input);
+        }
 
-        if (rc == -EAGAIN)
+        if (rc == -EAGAIN) {
             continue;
+        }
 
-        if (rc != LIBEVDEV_READ_STATUS_SUCCESS)
+        if (rc != LIBEVDEV_READ_STATUS_SUCCESS) {
             break;
-
-        if (fwrite(&input, sizeof input, 1, stdout) != 1)
-            goto teardown_grab;
+        }
+        // fprintf(stderr, "%d\t%d\n", input.code, input.value);
+        if (input.type == EV_KEY) {
+            if (input.code == KEY_LEFTMETA) {
+                if (input.value == KEY_PRESSED_EVENT) {
+                    wait_for_release = true;
+                } else if (input.value == KEY_RELEASED_EVENT) {
+                    if (wait_for_release) {
+                        // fprintf(stderr, "GOTCHA!!!\n");
+                        system("runuser -l ubuntu -c \"albert toggle\"");
+                        wait_for_release = false;
+                    }
+                } else {
+                    wait_for_release = false;
+                }
+            } else {
+                wait_for_release = false;
+            }
+        }
     }
 
     result = EXIT_SUCCESS;
-
 teardown_grab:
-    if (grab)
+
+    if (grab) {
         libevdev_grab(dev, LIBEVDEV_UNGRAB);
+    }
+
 teardown_dev:
     libevdev_free(dev);
 teardown_fd:
     close(fd);
-
     return result;
 }

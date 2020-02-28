@@ -1,0 +1,10 @@
+[Unit]
+Description=Gnome 3 developers brain damage fix
+After=graphical.target
+
+[Service]
+Type=Idle
+ExecStart=/home/ubuntu/Workspace/tools/build/intercept /dev/input/event2
+
+[Install]
+WantedBy=default.target
